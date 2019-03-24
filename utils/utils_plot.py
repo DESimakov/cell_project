@@ -18,12 +18,11 @@ def block(ax, data_train, data_val, title, ylabel, xlabel, font_size=20):
     ax.legend(frameon=False, fontsize=font_size)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    #return ax
 
 def vizualize(model_path, fold, show=True, save=False, save_dir=None, save_format='.pdf'):
     train_res = np.load(os.path.join(model_path, 'train_metrics_' + fold + '.npy'))
     val_res = np.load(os.path.join(model_path, 'val_metrics_' + fold + '.npy'))
-    
+
     f1_val = val_res[:, 0]
     pr_val = val_res[:, 1]
     rec_val = val_res[:, 2]
@@ -39,7 +38,7 @@ def vizualize(model_path, fold, show=True, save=False, save_dir=None, save_forma
     acc_one_train = train_res[:, 4]
     acc_zero_train = train_res[:, 5]
     loss_train = train_res[:, 6]
-    
+
     fig = plt.figure(figsize=[20, 10])
 
     ax1 = plt.subplot2grid((3,3), (0,0))
@@ -70,7 +69,6 @@ def vizualize(model_path, fold, show=True, save=False, save_dir=None, save_forma
     else:
         plt.close(fig)
 
-        
     if save:
         if save_dir is None:
             save_dir = model_path
