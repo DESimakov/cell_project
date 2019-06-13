@@ -4,6 +4,7 @@ from IPython.display import clear_output
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
+import torch.nn as nn
 import time
 from torch.autograd import Variable
 import torch
@@ -28,6 +29,9 @@ def validation(model, dataloaders, criterion, phase, use_gpu, device):
             outputs = model(inputs)
             loss = criterion(outputs.type(torch.cuda.FloatTensor)[:, 1],
                                  labels.type(torch.cuda.FloatTensor))
+            #loss = nn.BCEWithLogitsLoss(reduction='sum',
+            #                            weight=torch.ones(outputs.shape[0]).to(device) / 5)(outputs.type(torch.cuda.FloatTensor)[:, 1],
+            #                     labels.type(torch.cuda.FloatTensor))
             true = np.append(true, to_numpy(labels, use_gpu))
             pred = np.append(pred, sigmoid(to_numpy(outputs[:, 1], use_gpu)))
             losses = np.append(losses, to_numpy(loss, use_gpu))
@@ -40,12 +44,13 @@ def validation(model, dataloaders, criterion, phase, use_gpu, device):
 def train_model(model, criterion, optimizer, scheduler, dataloaders,
                 dataset_sizes, model_path, device, fold_name,
                 use_gpu=True, num_epochs=25, plot_res=True,
-                predict_test=True, save_val=True):
+                predict_test=True, save_val=True, best='loss'):
     since = time.time()
 
     
     torch.save(model.state_dict(), os.path.join(model_path, '_temp'))
     best_f1 = 0.0
+    best_loss = np.inf
     best_epoch = 0
     train_metrics = []
     val_metrics = []
@@ -79,6 +84,9 @@ def train_model(model, criterion, optimizer, scheduler, dataloaders,
 
             loss = criterion(outputs.type(torch.cuda.FloatTensor)[:, 1],
                              labels.type(torch.cuda.FloatTensor))
+            #loss = nn.BCEWithLogitsLoss(reduction='sum',
+            #                            weight=torch.ones(outputs.shape[0]).to(device) / 5)(outputs.type(torch.cuda.FloatTensor)[:, 1],
+            #                 labels.type(torch.cuda.FloatTensor))
             loss.backward()
             optimizer.step()
 
@@ -117,9 +125,17 @@ def train_model(model, criterion, optimizer, scheduler, dataloaders,
         val_metrics.append(metr_val+[(val_loss)/dataset_sizes['val']])
         
         if f1_05_val > best_f1:
-            best_f1 = f1_05_val
-            best_epoch = epoch
-            torch.save(model.state_dict(), os.path.join(model_path, '_temp'))
+                best_f1 = f1_05_val
+                if best=='metric':
+                    best_epoch = epoch
+                    torch.save(model.state_dict(), os.path.join(model_path, '_temp'))
+                    
+        if (val_loss)/dataset_sizes['val'] < best_loss:
+                best_loss = (val_loss)/dataset_sizes['val']
+                if best=='loss':
+                    best_epoch = epoch
+                    torch.save(model.state_dict(), os.path.join(model_path, '_temp'))
+                
 
         time_elapsed = time.time() - since
         print('Elapsed {:.0f}m {:.0f}s\n'.format(time_elapsed // 60,
@@ -140,8 +156,10 @@ def train_model(model, criterion, optimizer, scheduler, dataloaders,
     print('Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
     print('Best val f1_05: {:4f}'.format(best_f1))
-
-    model.load_state_dict(torch.load(os.path.join(model_path, '_temp')))
+    print('Best val loss: {:4f}'.format(best_loss))
+    if best is not None:
+        model.load_state_dict(torch.load(os.path.join(model_path, '_temp')))
+        
     vizualize(model_path, fold_name, show=False, save=True, save_format='.pdf')
     
     if predict_test:
@@ -157,6 +175,10 @@ def train_model(model, criterion, optimizer, scheduler, dataloaders,
                        index=False)
     if save_val:
         results = pd.DataFrame()
+        val_true , val_pred, _ = validation(model, dataloaders, 
+                                     criterion, device=device,
+                                     use_gpu=use_gpu,
+                                     phase='val')
         results['true'] = val_true
         results['pred'] = val_pred
         results['file'] = [sample[0] for sample in dataloaders['val'].dataset.samples]

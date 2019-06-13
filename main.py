@@ -16,11 +16,11 @@ warnings.filterwarnings("ignore")
 
 from utils.utils_data_load import *
 from train.train_functions import *
-
+from utils.utils import FocalLoss
 from albumentations.pytorch import ToTensor
 from albumentations import (Compose, CenterCrop, VerticalFlip, RandomSizedCrop,
-                            HorizontalFlip, HueSaturationValue,
-                            Resize, RandomCrop)
+                            HorizontalFlip, HueSaturationValue, ShiftScaleRotate, 
+                            Resize, RandomCrop, Normalize, Rotate)
 '''
 Dependencies:
     
@@ -34,7 +34,18 @@ tqdm==4.31.1
 
 def change_classes(x):
         return 1 - x
+    
+class BP(nn.Module):
+    def __init__(self):
+        super(BP, self).__init__()
+        pass
 
+    def forward(self, x):
+        x = x.view(-1, 512, x.shape[2]**2)
+        x = torch.bmm(x, torch.transpose(x, 1, 2))
+        x = x.view(-1, 512**2)       
+        return x
+    
 def main():
 
     parser = argparse.ArgumentParser(description='PyTorch Cell predict')
@@ -42,7 +53,7 @@ def main():
     parser.add_argument('--batch-size', type=int, default=64, metavar='N',
                         help='input batch size for training (default: 64)')
 
-    parser.add_argument('--num_epochs', type=int, default=50,
+    parser.add_argument('--num-epochs', type=int, default=50,
                         help='number of training epochs (default: 50)')
 
     parser.add_argument('--model-path', default='../results/',
@@ -74,74 +85,82 @@ def main():
     use_gpu = torch.cuda.is_available()
 
     data_transforms = {
-        'train': Compose([
-        #CenterCrop(350, 350),
-        #Resize(224, 224),
+        'train': {
+                0:
+        Compose([
+        Rotate(15),
         CenterCrop(224, 224), 
         VerticalFlip(),
         HorizontalFlip(),
-        HueSaturationValue(),
-        ToTensor()
-    ]),
-        'val': Compose([
+        HueSaturationValue(hue_shift_limit=50, sat_shift_limit=50, val_shift_limit=40),
+        ToTensor()]),
+    1:Compose([
+        Rotate(15),
         CenterCrop(224, 224), 
-        #CenterCrop(350, 350),
-        #Resize(224, 224),
+        VerticalFlip(),
+        HorizontalFlip(),
+        HueSaturationValue(hue_shift_limit=50, sat_shift_limit=50, val_shift_limit=40),
+        ToTensor()])},
+        'val': {0: Compose([
+        CenterCrop(224, 224),
         ToTensor()
     ]),
-        'test': Compose([
+    1: Compose([
         CenterCrop(224, 224), 
-        #CenterCrop(350, 350),
-        #Resize(224, 224),
+        ToTensor()
+    ])},
+        'test': {0: Compose([
+        CenterCrop(224, 224), 
         ToTensor()
     ]),
+    1:Compose([
+        CenterCrop(224, 224), 
+        ToTensor()
+    ])},
     }
 
     target_transform = change_classes
     loo = LeaveOneOut()
 
-    folds = np.array(['fold_0','fold_1','fold_2', 'fold_3'])
+    folds = np.array(['fold_0','fold_1','fold_2'])
 
     device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    for tr, vl in loo.split(folds):
-        model_ft = pretrainedmodels.__dict__['resnet50'](num_classes=1000, pretrained=None#'imagenet'
-                                            )
-
-        model_ft.last_linear = nn.Linear(2048, 20)
-
-
-        if use_gpu:
-            model_ft = model_ft.to(device)
-        criterion = nn.BCEWithLogitsLoss(reduction='sum')
-
-        params_to_train = model_ft.parameters()
-        optimizer_ft = optim.Adam(params_to_train)
-        plat_lr_scheduler = lr_scheduler.ReduceLROnPlateau(optimizer_ft,
-                                                               'min', patience=3,
-                                                               factor=0.999, verbose=True)
-
-        train_folds = folds[tr]
-        val_folds = folds[vl]
-        test_data = ['test']
-
-        dataloaders, dataset_sizes, class_names = loader(data_transforms, train_folds, val_folds,
-                                                         test_data, data_dir, bs=args.batch_size,
-                                                         target_transform=target_transform)
-
-        model_ft, best_score = train_model(model_ft, criterion, optimizer_ft,
-                                   plat_lr_scheduler,
-                                   dataset_sizes=dataset_sizes,
-                                   model_path=model_path,
-                                   dataloaders=dataloaders,
-                                   device=device, 
-                                   num_epochs=args.num_epochs,
-                                   fold_name=folds[vl][0])
-
-        torch.save(model_ft.state_dict(),
-                   os.path.join(model_path, 'val_' + folds[vl][0] + '_f1_05_' + str(best_score).replace('.', '')))
-        del criterion, optimizer_ft, plat_lr_scheduler
-        torch.cuda.empty_cache()
-        gc.collect()
+    for n, (tr, vl) in enumerate((list(loo.split(folds)))):
+        if True:
+            model_ft = pretrainedmodels.__dict__['resnet18'](num_classes=1000, pretrained='imagenet')
+            model_ft.last_linear = nn.Linear(512, 2)
+    
+    
+            if use_gpu:
+                model_ft = model_ft.to(device)
+            criterion = FocalLoss(gamma=0.3, alpha=None, size_average=False)
+            params_to_train = model_ft.parameters()
+            optimizer_ft = optim.Adam(params_to_train)
+            plat_lr_scheduler = lr_scheduler.ReduceLROnPlateau(optimizer_ft,
+                                                                   'min', patience=3,
+                                                                   factor=0.95, verbose=True)
+            train_folds = folds[tr]
+            val_folds = folds[vl]
+            test_data = ['fold_3']
+    
+            dataloaders, dataset_sizes, class_names = loader(data_transforms, train_folds, val_folds,
+                                                             test_data, data_dir, bs=args.batch_size,
+                                                             target_transform=target_transform)
+    
+            model_ft, best_score = train_model(model_ft, criterion, optimizer_ft,
+                                       plat_lr_scheduler,
+                                       dataset_sizes=dataset_sizes,
+                                       model_path=model_path,
+                                       dataloaders=dataloaders,
+                                       device=device, 
+                                       num_epochs=args.num_epochs,
+                                       fold_name=folds[vl][0], best='loss')
+    
+            torch.save(model_ft.state_dict(),
+                       os.path.join(model_path, 'val_' + folds[vl][0] + '_f1_05_' + str(best_score).replace('.', '')))
+            del criterion, optimizer_ft, plat_lr_scheduler
+            torch.cuda.empty_cache()
+            gc.collect()
 
 if __name__ == '__main__':
     main()

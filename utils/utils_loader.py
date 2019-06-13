@@ -5,6 +5,8 @@ from PIL import Image
 import os
 import os.path
 import numpy as np
+import cv2
+
 
 def has_file_allowed_extension(filename, extensions):
     filename_lower = filename.lower()
@@ -47,7 +49,8 @@ def make_dataset(class_to_idx, extensions, dirs=None, image_path=None):
 
 class DatasetFolder(data.Dataset):
 
-    def __init__(self, loader, extensions, root=None, image_path=None, transform=None, target_transform=None):
+    def __init__(self, loader, extensions, root=None, image_path=None, transform=None, target_transform=None,
+                 stage='val'):
         if root is None and image_path is None:
             raise(RuntimeError("root or image_path must be given"))        
         if root is not None:
@@ -66,8 +69,12 @@ class DatasetFolder(data.Dataset):
 
         self.classes = classes
         self.class_to_idx = class_to_idx
-        self.samples = samples
-
+        cond_samples = [i for i in samples if i[1]==1]
+        if stage == 'train':
+            self.samples = samples# + cond_samples
+        else:
+            self.samples = samples
+        
         self.transform = transform
         self.target_transform = target_transform
 
@@ -75,10 +82,11 @@ class DatasetFolder(data.Dataset):
 
         path, target = self.samples[index]
         sample = self.loader(path)
-        if self.transform is not None:
-            sample = self.transform(image=np.array(sample))['image']
         if self.target_transform is not None:
             target = self.target_transform(target)
+        if self.transform is not None:
+
+            sample = self.transform[target](image=np.array(sample))['image']
 
         return sample, target
 
@@ -102,7 +110,6 @@ IMG_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif']
 
 
 def pil_loader(path):
-    # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
     with open(path, 'rb') as f:
         img = Image.open(f)
         return img.convert('RGB')
@@ -113,7 +120,6 @@ def accimage_loader(path):
     try:
         return accimage.Image(path)
     except IOError:
-        # Potentially a decoding problem, fall back to PIL.Image
         return pil_loader(path)
 
 
@@ -127,11 +133,12 @@ def default_loader(path):
 
 class ImageFolder(DatasetFolder):
     def __init__(self, root=None, image_path=None, transform=None, target_transform=None,
-                 loader=default_loader):
+                 loader=default_loader, stage='val'):
         super(ImageFolder, self).__init__(loader=default_loader,
                                           extensions=IMG_EXTENSIONS,
                                           root=root,
                                           image_path=image_path,
                                           transform=transform,
-                                          target_transform=target_transform)
+                                          target_transform=target_transform,
+                                          stage=stage)
         self.imgs = self.samples
